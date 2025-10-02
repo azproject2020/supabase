@@ -48,7 +48,8 @@ import {
 } from 'data/projects/project-create-mutation'
 import { useProjectsQuery } from 'data/projects/projects-query'
 import { useSendEventMutation } from 'data/telemetry/send-event-mutation'
-import { useCheckPermissions } from 'hooks/misc/useCheckPermissions'
+import { useCustomContent } from 'hooks/custom-content/useCustomContent'
+import { useAsyncCheckPermissions } from 'hooks/misc/useCheckPermissions'
 import { useIsFeatureEnabled } from 'hooks/misc/useIsFeatureEnabled'
 import { useLocalStorageQuery } from 'hooks/misc/useLocalStorage'
 import { useSelectedOrganizationQuery } from 'hooks/misc/useSelectedOrganization'
@@ -57,15 +58,16 @@ import { getCloudProviderArchitecture } from 'lib/cloudprovider-utils'
 import {
   AWS_REGIONS_DEFAULT,
   DEFAULT_MINIMUM_PASSWORD_STRENGTH,
-  DEFAULT_PROVIDER,
+  DOCS_URL,
   FLY_REGIONS_DEFAULT,
   MANAGED_BY,
   PROJECT_STATUS,
   PROVIDERS,
+  useDefaultProvider,
 } from 'lib/constants'
 import passwordStrength from 'lib/password-strength'
 import { generateStrongPassword } from 'lib/project'
-import type { CloudProvider } from 'shared-data'
+import { AWS_REGIONS, type CloudProvider } from 'shared-data'
 import type { NextPageWithLayout } from 'types'
 import {
   Badge,
@@ -141,6 +143,8 @@ const Wizard: NextPageWithLayout = () => {
 
   const showAdvancedConfig = useIsFeatureEnabled('project_creation:show_advanced_config')
 
+  const { infraCloudProviders: validCloudProviders } = useCustomContent(['infra:cloud_providers'])
+
   // This is to make the database.new redirect work correctly. The database.new redirect should be set to supabase.com/dashboard/new/last-visited-org
   if (slug === 'last-visited-org') {
     if (lastVisitedOrganization) {
@@ -156,6 +160,7 @@ const Wizard: NextPageWithLayout = () => {
   const projectCreationDisabled = useFlag('disableProjectCreationAndUpdate')
   const showPostgresVersionSelector = useFlag('showPostgresVersionSelector')
   const cloudProviderEnabled = useFlag('enableFlyCloudProvider')
+
   const { data: membersExceededLimit } = useFreeProjectLimitCheckQuery(
     { slug },
     { enabled: isFreePlan }
@@ -221,9 +226,11 @@ const Wizard: NextPageWithLayout = () => {
         project.organization_id === currentOrg?.id && project.status !== PROJECT_STATUS.INACTIVE
     ) ?? []
 
+  const defaultProvider = useDefaultProvider()
+
   const { data: _defaultRegion, error: defaultRegionError } = useDefaultRegionQuery(
     {
-      cloudProvider: PROVIDERS[DEFAULT_PROVIDER].id,
+      cloudProvider: PROVIDERS[defaultProvider].id,
     },
     {
       enabled: !smartRegionEnabled,
@@ -239,7 +246,7 @@ const Wizard: NextPageWithLayout = () => {
     useOrganizationAvailableRegionsQuery(
       {
         slug: slug,
-        cloudProvider: PROVIDERS[DEFAULT_PROVIDER].id,
+        cloudProvider: PROVIDERS[defaultProvider].id,
       },
       {
         enabled: smartRegionEnabled,
@@ -253,9 +260,11 @@ const Wizard: NextPageWithLayout = () => {
   const regionError = smartRegionEnabled ? availableRegionsError : defaultRegionError
   const defaultRegion = smartRegionEnabled
     ? availableRegionsData?.recommendations.smartGroup.name
-    : _defaultRegion
+    : defaultProvider === 'AWS_NIMBUS'
+      ? AWS_REGIONS.EAST_US.displayName
+      : _defaultRegion
 
-  const isAdmin = useCheckPermissions(PermissionAction.CREATE, 'projects')
+  const { can: isAdmin } = useAsyncCheckPermissions(PermissionAction.CREATE, 'projects')
 
   const isInvalidSlug = isOrganizationsSuccess && currentOrg === undefined
   const orgNotFound = isOrganizationsSuccess && (organizations?.length ?? 0) > 0 && isInvalidSlug
@@ -304,7 +313,7 @@ const Wizard: NextPageWithLayout = () => {
       organization: slug,
       projectName: projectName || '',
       postgresVersion: '',
-      cloudProvider: PROVIDERS[DEFAULT_PROVIDER].id,
+      cloudProvider: PROVIDERS[defaultProvider].id,
       dbPass: '',
       dbPassStrength: 0,
       dbRegion: defaultRegion || undefined,
@@ -455,7 +464,7 @@ const Wizard: NextPageWithLayout = () => {
 
   useEffect(() => {
     if (regionError) {
-      form.setValue('dbRegion', PROVIDERS[DEFAULT_PROVIDER].default_region.displayName)
+      form.setValue('dbRegion', PROVIDERS[defaultProvider].default_region.displayName)
     }
   }, [regionError])
 
@@ -489,7 +498,7 @@ const Wizard: NextPageWithLayout = () => {
                   canCreateProject &&
                   additionalMonthlySpend > 0 && (
                     <div className="flex justify-between text-sm">
-                      <span>Additional Costs</span>
+                      <span>Additional costs</span>
                       <div className="text-brand flex gap-1 items-center font-mono font-medium">
                         <span>${additionalMonthlySpend}/m</span>
                         <InfoTooltip side="top" className="max-w-[450px] p-0">
@@ -497,7 +506,7 @@ const Wizard: NextPageWithLayout = () => {
                             <p>
                               Each project includes a dedicated Postgres instance running on its own
                               server. You are charged for the{' '}
-                              <InlineLink href="https://supabase.com/docs/guides/platform/billing-on-supabase">
+                              <InlineLink href={`${DOCS_URL}/guides/platform/billing-on-supabase`}>
                                 Compute resource
                               </InlineLink>{' '}
                               of that server, independent of your database usage.
@@ -707,15 +716,20 @@ const Wizard: NextPageWithLayout = () => {
                                 </FormControl_Shadcn_>
                                 <SelectContent_Shadcn_>
                                   <SelectGroup_Shadcn_>
-                                    {Object.values(PROVIDERS).map((providerObj) => {
-                                      const label = providerObj['name']
-                                      const value = providerObj['id']
-                                      return (
-                                        <SelectItem_Shadcn_ key={value} value={value}>
-                                          {label}
-                                        </SelectItem_Shadcn_>
+                                    {Object.values(PROVIDERS)
+                                      .filter(
+                                        (provider) =>
+                                          validCloudProviders?.includes(provider.id) ?? true
                                       )
-                                    })}
+                                      .map((providerObj) => {
+                                        const label = providerObj['name']
+                                        const value = providerObj['id']
+                                        return (
+                                          <SelectItem_Shadcn_ key={value} value={value}>
+                                            {label}
+                                          </SelectItem_Shadcn_>
+                                        )
+                                      })}
                                   </SelectGroup_Shadcn_>
                                 </SelectContent_Shadcn_>
                               </Select_Shadcn_>
@@ -735,26 +749,26 @@ const Wizard: NextPageWithLayout = () => {
                               layout="horizontal"
                               label={
                                 <div className="flex flex-col gap-y-4">
-                                  <span>Compute Size</span>
+                                  <span>Compute size</span>
 
                                   <div className="flex flex-col gap-y-2">
                                     <Link
                                       target="_blank"
                                       rel="noopener noreferrer"
-                                      href="https://supabase.com/docs/guides/platform/compute-add-ons"
+                                      href={`${DOCS_URL}/guides/platform/compute-add-ons`}
                                     >
                                       <div className="flex items-center space-x-2 opacity-75 hover:opacity-100 transition">
-                                        <p className="text-sm m-0">Compute Add-Ons</p>
+                                        <p className="text-sm m-0">Compute add-ons</p>
                                         <ExternalLink size={16} strokeWidth={1.5} />
                                       </div>
                                     </Link>
                                     <Link
                                       target="_blank"
                                       rel="noopener noreferrer"
-                                      href="https://supabase.com/docs/guides/platform/manage-your-usage/compute"
+                                      href={`${DOCS_URL}/guides/platform/manage-your-usage/compute`}
                                     >
                                       <div className="flex items-center space-x-2 opacity-75 hover:opacity-100 transition">
-                                        <p className="text-sm m-0">Compute Billing</p>
+                                        <p className="text-sm m-0">Compute billing</p>
                                         <ExternalLink size={16} strokeWidth={1.5} />
                                       </div>
                                     </Link>
@@ -845,7 +859,7 @@ const Wizard: NextPageWithLayout = () => {
 
                           return (
                             <FormItemLayout
-                              label="Database Password"
+                              label="Database password"
                               layout="horizontal"
                               description={
                                 <>
@@ -926,7 +940,7 @@ const Wizard: NextPageWithLayout = () => {
                             <FormItemLayout
                               label="Custom Postgres version"
                               layout="horizontal"
-                              description="Specify a custom version of Postgres (Defaults to the latest). This is only applicable for local/staging projects"
+                              description="Specify a custom version of Postgres (defaults to the latest). This is only applicable for local/staging projects."
                             >
                               <FormControl_Shadcn_>
                                 <Input_Shadcn_
@@ -1016,7 +1030,7 @@ const Wizard: NextPageWithLayout = () => {
               monthly costs by ${additionalMonthlySpend}, independent of how actively you use it. By
               clicking "I understand", you agree to the additional costs.{' '}
               <Link
-                href="https://supabase.com/docs/guides/platform/manage-your-usage/compute"
+                href={`${DOCS_URL}/guides/platform/manage-your-usage/compute`}
                 target="_blank"
                 className="underline"
               >

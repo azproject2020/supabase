@@ -9,7 +9,7 @@ import {
   MAX_EXPORT_ROW_COUNT,
   MAX_EXPORT_ROW_COUNT_MESSAGE,
 } from 'components/grid/components/header/Header'
-import { parseSupaTable } from 'components/grid/SupabaseGrid.utils'
+import { LOAD_TAB_FROM_CACHE_PARAM, parseSupaTable } from 'components/grid/SupabaseGrid.utils'
 import {
   formatTableRowsToSQL,
   getEntityLintDetails,
@@ -210,11 +210,13 @@ const EntityListItem: ItemRenderer<Entity, EntityListItemProps> = ({
         connectionString: project?.connectionString,
         table: supaTable,
       })
+
       const formattedRows = rows.map((row) => {
-        const formattedRow = row
-        Object.keys(row).map((column) => {
-          if (typeof row[column] === 'object' && row[column] !== null)
-            formattedRow[column] = JSON.stringify(formattedRow[column])
+        const formattedRow = { ...row }
+        Object.keys(row).forEach((column) => {
+          if (typeof row[column] === 'object' && row[column] !== null) {
+            formattedRow[column] = JSON.stringify(row[column])
+          }
         })
         return formattedRow
       })
@@ -235,7 +237,7 @@ const EntityListItem: ItemRenderer<Entity, EntityListItemProps> = ({
     <EditorTablePageLink
       title={entity.name}
       id={String(entity.id)}
-      href={`/project/${projectRef}/editor/${entity.id}?schema=${entity.schema}`}
+      href={`/project/${projectRef}/editor/${entity.id}?schema=${entity.schema}&${LOAD_TAB_FROM_CACHE_PARAM}=true`}
       role="button"
       aria-label={`View ${entity.name}`}
       className={cn(
